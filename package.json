@@ -10,7 +10,8 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "sandbox:build": "docker build -t sandbox-python:3.12 sandbox-image",
-    "attacks": "tsx scripts/run-attacks.ts"
+    "attacks": "tsx scripts/run-attacks.ts",
+    "inspect": "sh scripts/inspect-box.sh"
   },
   "dependencies": {
     "dockerode": "^4.0.2",
