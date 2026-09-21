@@ -88,10 +88,41 @@ to "disable" it would be to mount `/` from the host — try adding `"/:/host"` t
 
 ## What a container actually is
 
-*(Day 2 — write this yourself, in your own words, after doing the commands below. Do not
-paste from a website. This section is the thing being graded.)*
+A container is not a virtual machine. It's a normal Linux process that the kernel limits and
+isolates.
 
-Get inside a running box:
+**Isolation is namespaces.** Inside the box `echo $$` printed `1` and `/proc` listed 4 processes;
+on my Mac the same shell was PID `13352` among `731` processes, at the same moment. That's the PID
+namespace — the box can't see or kill Mac processes. The network namespace is why yesterday's
+`curl` failed with "name resolution failed": `pnpm inspect` showed `routes out: 0`. There's no
+route, so the internet doesn't exist from inside. The mount namespace gives the box its own
+filesystem tree — an overlay of the image's layers, mounted `ro` — which is why `/Users` was
+"not found" rather than "forbidden".
+
+**Limits are cgroups.** I read them as plain files under `/sys/fs/cgroup`:
+
+| file | value | what happens at the limit |
+| --- | --- | --- |
+| `memory.max` | `268435456` (256 MB) | the kernel kills the process (OOM, exit 137) |
+| `pids.max` | `32` | `fork()` fails with EAGAIN |
+| `cpu.max` | `50000 100000` (50 ms of every 100 ms = half a core) | it just slows down — never dies, so the timeout is still needed |
+
+**Even root is powerless here.** `CapEff: 0000000000000000` — all capabilities dropped. With
+`DISABLE=user` I was root inside the box and still couldn't delete `/bin/sh`: root has no powers,
+it can't remount the read-only filesystem.
+
+**Docker sets this up and leaves.** What's running afterwards is `sh` under a Linux kernel with
+namespaces, cgroups, a read-only overlay mount and zero capabilities. Docker isn't in the loop.
+
+**On a Mac none of this exists.** `ls /proc` on macOS says "No such file or directory" — no
+`/proc`, no cgroups, no namespaces; Darwin is a different kernel. The box runs inside a Linux VM
+that Docker Desktop boots (`6.12.76-linuxkit`). So on my laptop the real picture is
+macOS → Linux VM → container → my process.
+
+---
+
+The commands behind the paragraph above — `pnpm inspect` runs them all, or get inside a box by
+hand:
 
 ```bash
 docker run --rm -it --memory 256m --pids-limit 32 --network none --read-only \
