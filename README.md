@@ -127,7 +127,18 @@ Questions to be able to answer on camera after this:
 
 *(Keep a log. This is the answer to "what did you actually do" — one entry per surprise.)*
 
-- 
+1. When I ran `DISABLE=network` the error changed from "name resolution failed" to `HTTP 405` — a 405
+   is a reply *from* example.com, so the request had really reached the internet. Same exit code 1,
+   completely different meaning.
+2. With `DISABLE=user`, hello printed `uid 0` instead of `1000` — my code was root inside the
+   container — but `06_destroy` still failed, because the filesystem was still mounted read-only and
+   root cannot write to a read-only mount either.
+3. With `DISABLE=readonly`, `06_destroy` still failed, but the error was `Errno 13 Permission denied`
+   instead of `Errno 30 Read-only file system` — the mount let me write, but `/bin/sh` is owned by
+   root and I was uid 1000. Two different walls, one behind the other.
+4. When the server said `EADDRINUSE`, it was because the previous server was still running and
+   holding port 3000, and my attacks were actually hitting that old server — which is why row 04
+   didn't change the first time.
 
 ---
 
