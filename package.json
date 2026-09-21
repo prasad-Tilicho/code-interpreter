@@ -1,0 +1,27 @@
+{
+  "name": "code-interpreter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A secure code-execution sandbox for AI agents — built from the operating system up",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "sandbox:build": "docker build -t sandbox-python:3.12 sandbox-image",
+    "attacks": "tsx scripts/run-attacks.ts"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.2",
+    "fastify": "^5.2.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.32",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
