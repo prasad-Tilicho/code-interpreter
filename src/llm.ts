@@ -72,15 +72,17 @@ export function geminiLlm(): Llm {
   return {
     name: model,
     async generate(system, history) {
-      const res = await ai.models.generateContent({
-        model,
-        contents: history,
-        config: {
-          systemInstruction: system,
-          tools: [{ functionDeclarations: [RUN_PYTHON] }],
-          temperature: 0.2,
-        },
-      });
+      const res = await withRetry(() =>
+        ai.models.generateContent({
+          model,
+          contents: history,
+          config: {
+            systemInstruction: system,
+            tools: [{ functionDeclarations: [RUN_PYTHON] }],
+            temperature: 0.2,
+          },
+        }),
+      );
       const content = res.candidates?.[0]?.content ?? {
         role: "model",
         parts: [{ text: res.text ?? "" }],
@@ -102,6 +104,38 @@ export function geminiLlm(): Llm {
       };
     },
   };
+}
+
+/**
+ * A model API is a network call, and network calls fail for reasons that have
+ * nothing to do with you. 429 (rate limited) and 503 (overloaded) mean "try
+ * again shortly"; anything else means "you're wrong" and retrying won't help.
+ * Backoff doubles each time so a struggling service isn't hammered.
+ */
+const RETRYABLE = new Set([429, 503]);
+const MAX_ATTEMPTS = 4;
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!RETRYABLE.has(statusOf(err)) || attempt === MAX_ATTEMPTS - 1) throw err;
+      const delay = 1000 * 2 ** attempt; // 1 s, 2 s, 4 s
+      console.warn(`model returned ${statusOf(err)}; retrying in ${delay} ms`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
+/** The SDK throws an Error whose message is the API's JSON body. */
+function statusOf(err: unknown): number {
+  const m = (err as Error)?.message ?? "";
+  const code = m.match(/"code":\s*(\d{3})/)?.[1];
+  return code ? Number(code) : 0;
 }
 
 // ─── Stub ────────────────────────────────────────────────────────────────────
