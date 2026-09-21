@@ -108,12 +108,16 @@ export function geminiLlm(): Llm {
 
 /**
  * A model API is a network call, and network calls fail for reasons that have
- * nothing to do with you. 429 (rate limited) and 503 (overloaded) mean "try
+ * nothing to do with you. 503 (overloaded) and a per-minute 429 mean "try
  * again shortly"; anything else means "you're wrong" and retrying won't help.
- * Backoff doubles each time so a struggling service isn't hammered.
+ *
+ * Not every 429 is retryable: the free tier also has a per-DAY bucket
+ * (`…PerDay…` in the quota id). Retrying that just burns time, so it fails
+ * fast with a message that says what to do. When Google names a delay
+ * (`retryDelay`), honour it; otherwise back off 1 s, 2 s, 4 s.
  */
-const RETRYABLE = new Set([429, 503]);
 const MAX_ATTEMPTS = 4;
+const MAX_WAIT_MS = 15_000;
 
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   let lastErr: unknown;
@@ -122,20 +126,40 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
       return await fn();
     } catch (err) {
       lastErr = err;
-      if (!RETRYABLE.has(statusOf(err)) || attempt === MAX_ATTEMPTS - 1) throw err;
-      const delay = 1000 * 2 ** attempt; // 1 s, 2 s, 4 s
-      console.warn(`model returned ${statusOf(err)}; retrying in ${delay} ms`);
+      const info = classify(err);
+      if (info.kind === "daily-quota") {
+        throw new Error(
+          `Gemini free-tier daily quota exhausted for ${info.model ?? "this model"}. ` +
+            `Quota is per model: set GEMINI_MODEL to another (e.g. gemini-3.5-flash-lite) and restart.`,
+        );
+      }
+      if (info.kind !== "transient" || attempt === MAX_ATTEMPTS - 1) throw err;
+      const delay = Math.min(info.retryMs ?? 1000 * 2 ** attempt, MAX_WAIT_MS);
+      console.warn(`model returned ${info.status}; retrying in ${delay} ms`);
       await new Promise((r) => setTimeout(r, delay));
     }
   }
   throw lastErr;
 }
 
+interface ErrorInfo {
+  kind: "transient" | "daily-quota" | "fatal";
+  status: number;
+  retryMs?: number;
+  model?: string;
+}
+
 /** The SDK throws an Error whose message is the API's JSON body. */
-function statusOf(err: unknown): number {
+function classify(err: unknown): ErrorInfo {
   const m = (err as Error)?.message ?? "";
-  const code = m.match(/"code":\s*(\d{3})/)?.[1];
-  return code ? Number(code) : 0;
+  const status = Number(m.match(/"code":\s*(\d{3})/)?.[1] ?? 0);
+  const model = m.match(/"model":\s*"([^"]+)"/)?.[1];
+  if (status === 429 && /PerDay/.test(m)) return { kind: "daily-quota", status, model };
+  if (status === 429 || status === 503) {
+    const secs = m.match(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/)?.[1];
+    return { kind: "transient", status, retryMs: secs ? Number(secs) * 1000 : undefined };
+  }
+  return { kind: "fatal", status };
 }
 
 // ─── Stub ────────────────────────────────────────────────────────────────────
