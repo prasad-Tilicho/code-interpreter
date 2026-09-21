@@ -1,0 +1,9 @@
+Month,Region,Revenue (INR),Orders
+Jan,South,"₹1,20,000",340
+Feb,South,"₹1,35,000",372
+Mar,South,"₹42,000",118
+Apr,South,"₹1,28,000",355
+May,North,"₹98,000",261
+Jun,North,"₹1,10,000",290
+Jul,North,"₹1,42,000",401
+Aug,North,"₹1,05,000",287

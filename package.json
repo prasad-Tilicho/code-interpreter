@@ -11,9 +11,11 @@
     "test": "vitest run",
     "sandbox:build": "docker build -t sandbox-python:3.12 sandbox-image",
     "attacks": "tsx scripts/run-attacks.ts",
-    "inspect": "sh scripts/inspect-box.sh"
+    "inspect": "sh scripts/inspect-box.sh",
+    "ask": "tsx scripts/ask.ts"
   },
   "dependencies": {
+    "@google/genai": "^2.23.0",
     "dockerode": "^4.0.2",
     "fastify": "^5.2.0",
     "zod": "^3.24.1"

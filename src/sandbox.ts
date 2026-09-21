@@ -12,7 +12,7 @@
  */
 import Docker from "dockerode";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 
@@ -53,6 +53,18 @@ export interface RunResult {
   timedOut: boolean;
   oomKilled: boolean;
   truncated: boolean;
+  /** Files the code left in /workspace that weren't there before (charts, CSVs). */
+  producedFiles: string[];
+}
+
+/** A file to place in /workspace before the code runs. */
+export interface InputFile {
+  name: string;
+  content: string | Buffer;
+}
+
+export interface RunOptions {
+  files?: InputFile[];
 }
 
 const docker = new Docker();
@@ -71,11 +83,21 @@ export async function assertSandboxReady(): Promise<void> {
   }
 }
 
-export async function runPython(code: string): Promise<RunResult> {
+export async function runPython(
+  code: string,
+  opts: RunOptions = {},
+): Promise<RunResult> {
   const jobId = randomUUID();
   const jobDir = path.join(JOBS_DIR, jobId);
-  await mkdir(jobDir, { recursive: true });
+  await mkdir(jobDir, { recursive: true, mode: 0o777 });
   await writeFile(path.join(jobDir, "main.py"), code, { mode: 0o644 });
+  const inputNames = new Set(["main.py"]);
+  for (const f of opts.files ?? []) {
+    // A file name is untrusted input too: "../.zshrc" must not escape jobDir.
+    const safe = path.basename(f.name);
+    await writeFile(path.join(jobDir, safe), f.content, { mode: 0o644 });
+    inputNames.add(safe);
+  }
 
   const container = await docker.createContainer({
     Image: IMAGE,
@@ -141,6 +163,9 @@ export async function runPython(code: string): Promise<RunResult> {
     // Give the attach stream a moment to flush the last bytes.
     await Promise.race([ended, sleep(500)]);
     const info = await container.inspect();
+    const producedFiles = (await readdir(jobDir)).filter(
+      (n) => !inputNames.has(n),
+    );
     return {
       jobId,
       stdout: stdout.text(),
@@ -150,6 +175,7 @@ export async function runPython(code: string): Promise<RunResult> {
       timedOut,
       oomKilled: info.State.OOMKilled,
       truncated: stdout.truncated || stderr.truncated,
+      producedFiles,
     };
   } finally {
     if (timer) clearTimeout(timer);
