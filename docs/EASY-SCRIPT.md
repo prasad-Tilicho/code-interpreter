@@ -124,33 +124,55 @@ Two windows only: **the browser** and **one terminal tab**.
 
 ### UNDERSTAND THIS FIRST
 
-This is the most important part of the video. Take it slowly.
+**The one idea in this step:** the code is NOT running on a separate computer.
+It is a normal program on my Mac. The operating system has simply been told to
+do two things to it:
 
-When code runs inside my sandbox, it is not running on a separate computer. It
-is a normal program on my laptop — but the Linux kernel has been told to lie to
-it about the world.
+1. **Lie to it about the world** — show it a tiny fake computer
+2. **Give it a strict allowance** — this much memory, this much CPU, no more
 
-The command prints what the kernel is enforcing. Each line is a real limit:
+`pnpm inspect` starts one of these boxes and asks the operating system: _"what
+rules are you enforcing on this program right now?"_ The output is the answer.
 
-| What you see           | What it means                                                                            |
-| ---------------------- | ---------------------------------------------------------------------------------------- |
-| `uid=1000`             | the code is not an administrator                                                         |
-| `my PID: 1`            | the program thinks it is the **first** program on the machine                            |
-| `1 10 8 9`             | only **four** programs exist in its world. My Mac has 731.                               |
-| `memory.max 268435456` | 256 megabytes, written in bytes. Go over it and the kernel kills the program.            |
-| `pids.max 32`          | it can start at most 32 programs. That stops a program copying itself forever.           |
-| `cpu.max 50000 100000` | 50 milliseconds out of every 100. Half a processor. This **slows** it, never kills it.   |
-| `routes out: 0`        | no way to reach the internet. Not blocked — it does not exist from in there.             |
-| `overlay / … ro`       | the whole filesystem is read-only.                                                       |
-| `CapEff: 0000…`        | every special power removed. Even an administrator could not undo the read-only setting. |
-| `6.12.76-linuxkit`     | this is a **Linux** kernel. My Mac is not Linux.                                         |
+**The picture to hold in your head: an exam hall.**
 
-That last line matters. macOS has none of these features. So Docker Desktop
-quietly runs a small Linux computer inside my Mac, and every sandbox lives in
-there.
+You are in the same building as everyone else. But inside the hall you get one
+desk, no phone, no notes, three hours, and you cannot see the other rooms.
 
-The one-line summary: **Docker sets this up and then leaves.** What is running
-afterwards is an ordinary program, that the kernel has fenced in.
+You are not in a different building. You are in the same building, with rules
+around you.
+
+That is the sandbox. Same computer. Rules around the program.
+
+**Now read the output as two groups, not ten lines.**
+
+GROUP ONE — what it can **SEE**. A fake, tiny world:
+
+| line             | plain meaning                                                       |
+| ---------------- | ------------------------------------------------------------------- |
+| `my PID: 1`      | it thinks it is the **first** program ever started on this computer |
+| `1 10 8 9`       | **four** programs exist in its world. My Mac has 731 running.       |
+| `routes out: 0`  | no internet. Not blocked — there is no network card in there.       |
+| `overlay / … ro` | a filesystem that is not mine, and it is read-only                  |
+
+GROUP TWO — what it can **USE**. A strict allowance:
+
+| line                   | plain meaning                                                |
+| ---------------------- | ------------------------------------------------------------ |
+| `memory.max 268435456` | 256 MB, written in bytes. Go over → the kernel kills it.     |
+| `pids.max 32`          | at most 32 programs. Stops code copying itself forever.      |
+| `cpu.max 50000 100000` | 50 ms out of every 100 — half a processor. Slows, not kills. |
+| `CapEff: 0000…`        | zero special powers. Even an admin in there can't undo this. |
+
+**And the last line, which is its own point:**
+
+`6.12.76-linuxkit` is a **Linux** kernel. My Mac is not Linux — macOS has none
+of these features. So Docker quietly runs a tiny Linux computer inside my Mac,
+and every sandbox lives in there.
+
+**If you only say one sentence in this whole step, say this:** Docker sets all
+this up and then gets out of the way. What is left running is an ordinary
+program with the kernel holding a fence around it.
 
 ### DO THIS
 
@@ -160,49 +182,73 @@ In the second terminal tab:
 pnpm inspect
 ```
 
-Then scroll up to the top of the output and go down the list slowly with your
-cursor.
+Scroll to the top of the output. Then go down it with your cursor — but only
+stop on the **six bold lines** below. Skip the rest.
 
 ### SAY THIS
 
 > Let me show you what is actually happening underneath.
 >
-> This starts a sandbox and asks the Linux kernel what limits it is enforcing.
-
-_(point at each line as you say it, and pause between them)_
-
-> The code runs as a normal user, not an administrator.
+> This starts a sandbox and asks the operating system: what rules are you
+> enforcing on this program right now?
 >
-> Its process number is **one**. It thinks it is the first program on the
-> machine. It cannot see or touch anything on my Mac.
->
-> Four programs exist in its world. My Mac has over seven hundred running right
-> now.
->
-> Memory limit — two hundred and fifty-six megabytes, written in bytes. Go over
-> it and the kernel kills the program.
->
-> It can start at most thirty-two programs. That stops code from copying itself
-> forever.
->
-> Half a processor. And this one only slows it down — it never kills it.
->
-> Zero routes out. There is no internet in there. Not blocked — it does not
-> exist.
->
-> The whole filesystem is read-only.
->
-> And every special power is removed. Even an administrator in there could not
-> switch the read-only setting off.
+> And the answer comes back as a list.
 
 _(pause)_
 
-> And look at the last line. That is a **Linux** kernel. My Mac is not Linux.
-> macOS does not have any of these features. So Docker quietly runs a small
-> Linux computer inside my Mac, and every sandbox lives in there.
+> The important thing is that this is not a separate computer. It is a normal
+> program on my Mac. The operating system just does two things to it.
 >
-> Docker sets all this up and then gets out of the way. What is running is just
-> a normal program, with the kernel holding a fence around it.
+> **First, it lies to it about the world.**
+
+_(point at `my PID: 1`)_
+
+> Its process number is one. It thinks it is the very first program on the
+> machine.
+
+_(point at the four numbers)_
+
+> Four programs exist in its world. My Mac has over seven hundred running right
+> now.
+
+_(point at `routes out: 0`)_
+
+> Zero routes out. There is no internet in there. Not blocked — there is no
+> network card to block.
+
+_(pause)_
+
+> **Second, it gives it a strict allowance.**
+
+_(point at `memory.max`)_
+
+> Two hundred and fifty-six megabytes, written in bytes. Go over it and the
+> kernel kills the program.
+
+_(point at `pids.max`)_
+
+> It can start at most thirty-two programs. That stops code from copying itself
+> forever.
+
+_(point at `CapEff`)_
+
+> And all zeros here means every special power is removed. Even an
+> administrator inside that box could not switch the read-only filesystem off.
+
+_(pause — now the last line)_
+
+> One more thing. Look at the last line. That is a **Linux** kernel.
+>
+> My Mac is not Linux. macOS does not have any of these features at all. So
+> Docker quietly runs a tiny Linux computer inside my Mac, and every sandbox
+> lives in there.
+
+_(pause)_
+
+> Docker sets all this up, and then gets out of the way.
+>
+> What is left running is just an ordinary program, with the kernel holding a
+> fence around it.
 
 ---
 
