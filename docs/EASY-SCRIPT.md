@@ -3,7 +3,8 @@
 **The simplest version.** Mostly clicking buttons on a web page. One terminal
 command. Nothing that can hang or confuse you.
 
-About 5 minutes.
+About 6 minutes. If you are short of time, **Step 3B is the one to keep** and
+Step 5 is the one to cut.
 
 Each step has three parts:
 
@@ -66,8 +67,12 @@ Reload it so both panels are empty. Zoom in: **Cmd and +** twice.
 
 ### 6. Practise the RIGHT panel only — it is free
 
-Click all six red buttons once. Watch what each one does. **This costs nothing
-and you can repeat it as much as you like.**
+Click all six red python buttons once, **and the three C buttons on the row
+below**. Watch what each one does. **This costs nothing and you can repeat it
+as much as you like.**
+
+The two 10-second ones (infinite loop, and fork bomb in C) are the only slow
+ones. Everything else finishes instantly.
 
 ### 7. Do NOT practise the left panel
 
@@ -302,6 +307,104 @@ _(pause)_
 
 ---
 
+## STEP 3B — The same attacks in C · 35 seconds
+
+### UNDERSTAND THIS FIRST
+
+**This is the strongest thirty seconds in the video.** Everything so far was
+Python. A fair question is: are these limits really the kernel's, or did Python
+just refuse to do something?
+
+So the same attacks are rewritten in **C**, compiled by gcc **inside the
+sandbox**, and run as native binaries. No interpreter anywhere.
+
+They hit exactly the same walls, with exactly the same numbers:
+
+| attack        | Python                             | C                                  |
+| ------------- | ---------------------------------- | ---------------------------------- |
+| fork bomb     | refused after **31** children      | refused after **31** children      |
+| memory bomb   | killed at **250 MB**, exit **137** | killed at **250 MB**, exit **137** |
+| network       | fails                              | fails                              |
+| infinite loop | SIGKILL, **137**                   | SIGKILL, **137**                   |
+
+Same 31. Same 250. Same 137.
+
+**One difference worth pointing out** — the network error. Python's version
+asked for a _website name_, so it failed at the name lookup. The C version
+dials an IP address directly, skipping the name lookup completely. It **still**
+fails, one layer lower: `Network is unreachable`. There is no network card in
+there to send a packet from.
+
+Different error message. Same missing wall.
+
+**Two things you can add if you have time:**
+
+- The server supports six languages now — Python, JavaScript, C, C++, Java and
+  Bash. Each one has its own small image. Adding another is one Dockerfile and
+  one line of config.
+- The compiler runs **inside** the box too. A compiler fed hostile input is
+  untrusted code as well — gcc can be made to eat enormous memory. So compiling
+  and running share the same container, the same limits, and the same ten
+  seconds.
+
+### DO THIS
+
+Still in the right panel. There is a second row of red buttons labelled
+**"the same attacks in C — no interpreter involved"**.
+
+Click **fork bomb (C)**, then **memory bomb (C)**, then **network (C)**.
+
+Notice the language dropdown at the top switches to **C (gcc 14)** by itself,
+and the grey label next to it says **compiled**.
+
+The C fork bomb takes the full 10 seconds. Keep talking.
+
+### SAY THIS
+
+> Now, a fair question. Everything so far was Python. Are those really the
+> kernel's limits — or did Python just refuse to do something?
+>
+> So I wrote the same attacks in C.
+>
+> Notice the language switched by itself, and it says compiled. This gets
+> compiled by gcc **inside** the sandbox and run as a native program. There is
+> no Python anywhere.
+
+**(click fork bomb in C — talk during the 10 seconds)**
+
+> Same fork bomb, in C.
+>
+> Look at the number. **Thirty-one.** Exactly the same as Python.
+
+_(pause)_
+
+**(click memory bomb in C)**
+
+> Same memory bomb. Killed at two hundred and fifty megabytes. Exit one hundred
+> and thirty-seven.
+>
+> Identical.
+
+**(click network in C)**
+
+> And the network one. But look at the error — this is different.
+>
+> The Python version asked for a website by name, so it failed at the name
+> lookup.
+>
+> This one dials an IP address directly. It skips the name lookup completely.
+> And it still fails — one layer lower. **Network is unreachable.** There is no
+> network card in there to send a packet from.
+
+_(pause)_
+
+> So the fence is not around Python. It is around the **process**.
+>
+> The sandbox does not know what language it is running. It starts a program
+> and the kernel holds the fence.
+
+---
+
 ## STEP 4 — Now add the AI · 60 seconds
 
 ### UNDERSTAND THIS FIRST
@@ -493,7 +596,7 @@ again.
 
 ---
 
-# THE FIVE SENTENCES
+# THE SIX SENTENCES
 
 If you blank on camera, these carry the video:
 
@@ -504,7 +607,9 @@ If you blank on camera, these carry the video:
 3. "My home folder is not forbidden in there. It does not exist."
 4. "The whole sandbox runs in a small Linux computer, because macOS does not
    have these features."
-5. "Layer one is the model's judgement. Layer two is a kernel with no network.
+5. "The same fork bomb in C stops at the same thirty-one. The fence is around
+   the process, not the language."
+6. "Layer one is the model's judgement. Layer two is a kernel with no network.
    You build on layer two."
 
 ---
@@ -564,6 +669,27 @@ Send:
 > Because macOS does not have namespaces or cgroups — those are Linux features.
 > So Docker Desktop runs a small Linux computer in the background, and every
 > container lives in there. On a real Linux server there is no extra layer.
+
+### "Does it only run Python?"
+
+> No — six languages. Python, JavaScript, C, C++, Java and Bash. Each one has
+> its own small image, so a Python job does not carry a Java toolchain it will
+> never use. Adding another language is one Dockerfile and one line of config.
+
+### "Where does the compiling happen?"
+
+> Inside the sandbox, under the same limits. A compiler fed hostile input is
+> untrusted code too — gcc can be made to use enormous memory. So compiling and
+> running share one container and the same ten-second budget. If the compiler
+> rejects the code I report that as a compile error, not a crash.
+
+### "Why does Java get more memory than the others?"
+
+> Because a JVM reserves its heap up front and starts its own threads, and it
+> sizes both from the machine it thinks it is on. It will not start in two
+> hundred and fifty-six megabytes. So Java gets five hundred and twelve and a
+> single-threaded garbage collector. That is a fact about the runtime, not
+> about the sandbox — which is why the memory ceiling is set per language.
 
 ### "How is this useful for you?"
 
