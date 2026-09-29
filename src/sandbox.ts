@@ -1,8 +1,13 @@
 /**
  * THE PROJECT. Everything else is plumbing.
  *
- * runPython(code) starts one throwaway container, runs the code inside it
+ * run(language, code) starts one throwaway container, runs the code inside it
  * under hard limits, collects what it printed, and destroys the container.
+ *
+ * Note what is NOT in this file: anything about a language. The box starts a
+ * process and fences it in. Whether that process is `python main.py` or
+ * `./prog` is a row in src/runtimes.ts. That separation is the point — the
+ * same fork bomb in C and in Python dies at the same cgroup.
  *
  * Each limit below maps to ONE kernel mechanism. The DISABLE env var lets you
  * switch them off one at a time so you can watch each attack succeed without
@@ -15,8 +20,14 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import {
+  buildCommand,
+  COMPILE_FAILED,
+  DEFAULT_RUNTIME,
+  getRuntime,
+  RUNTIMES,
+} from "./runtimes.js";
 
-export const IMAGE = process.env.SANDBOX_IMAGE ?? "sandbox-python:3.12";
 const JOBS_DIR = path.resolve(process.env.JOBS_DIR ?? "jobs");
 
 export const LIMITS = {
@@ -29,12 +40,7 @@ export const LIMITS = {
 } as const;
 
 export type Protection =
-  | "memory"
-  | "pids"
-  | "network"
-  | "readonly"
-  | "timeout"
-  | "user";
+  "memory" | "pids" | "network" | "readonly" | "timeout" | "user";
 
 const disabled = new Set(
   (process.env.DISABLE ?? "")
@@ -55,6 +61,10 @@ export interface RunResult {
   truncated: boolean;
   /** Files the code left in /workspace that weren't there before (charts, CSVs). */
   producedFiles: string[];
+  /** Which runtime ran it. */
+  language: string;
+  /** True when the compiler rejected the source, so nothing ever ran. */
+  compileFailed: boolean;
 }
 
 /** A file to place in /workspace before the code runs. */
@@ -65,33 +75,52 @@ export interface InputFile {
 
 export interface RunOptions {
   files?: InputFile[];
+  /** A runtime id from src/runtimes.ts. Defaults to python. */
+  language?: string;
 }
 
 const docker = new Docker();
 
-/** Fails fast with a readable message if Docker or the image is missing. */
-export async function assertSandboxReady(): Promise<void> {
+/**
+ * Fails fast if Docker is down, and reports which language images exist.
+ *
+ * A missing image is not fatal: the server starts with whatever is built and
+ * refuses just that language, rather than refusing to boot because you have
+ * not pulled a JDK.
+ */
+export async function assertSandboxReady(): Promise<string[]> {
   try {
     await docker.ping();
   } catch {
     throw new Error("Docker is not running. Start Docker Desktop and retry.");
   }
-  try {
-    await docker.getImage(IMAGE).inspect();
-  } catch {
-    throw new Error(`Image ${IMAGE} not found. Run: pnpm sandbox:build`);
+
+  const available: string[] = [];
+  for (const rt of RUNTIMES) {
+    try {
+      await docker.getImage(rt.image).inspect();
+      available.push(rt.id);
+    } catch {
+      // not built — reported by the caller, not fatal
+    }
   }
+  if (available.length === 0) {
+    throw new Error("No sandbox images built. Run: pnpm sandbox:build");
+  }
+  return available;
 }
 
-export async function runPython(
+export async function run(
   code: string,
   opts: RunOptions = {},
 ): Promise<RunResult> {
+  const rt = getRuntime(opts.language ?? DEFAULT_RUNTIME);
+
   const jobId = randomUUID();
   const jobDir = path.join(JOBS_DIR, jobId);
   await mkdir(jobDir, { recursive: true, mode: 0o777 });
-  await writeFile(path.join(jobDir, "main.py"), code, { mode: 0o644 });
-  const inputNames = new Set(["main.py"]);
+  await writeFile(path.join(jobDir, rt.filename), code, { mode: 0o644 });
+  const inputNames = new Set([rt.filename]);
   for (const f of opts.files ?? []) {
     // A file name is untrusted input too: "../.zshrc" must not escape jobDir.
     const safe = path.basename(f.name);
@@ -99,9 +128,13 @@ export async function runPython(
     inputNames.add(safe);
   }
 
+  const memoryBytes = (rt.memoryMb ?? 256) * 1024 * 1024;
+
   const container = await docker.createContainer({
-    Image: IMAGE,
-    Cmd: ["python", "-u", "/workspace/main.py"],
+    Image: rt.image,
+    // One shell command: compile-then-run for compiled languages, just run for
+    // interpreted ones. `sh -c` is the only thing every image here agrees on.
+    Cmd: ["sh", "-c", buildCommand(rt)],
     WorkingDir: "/workspace",
     // Not root, even inside the box. Root in a container is root in the
     // kernel's eyes — one escape bug away from root on the host.
@@ -118,7 +151,7 @@ export async function runPython(
       // Memory cgroup. MemorySwap == Memory means "no swap" — otherwise the
       // box quietly gets 2× the limit via swap and the demo looks broken.
       ...(isOn("memory")
-        ? { Memory: LIMITS.memoryBytes, MemorySwap: LIMITS.memoryBytes }
+        ? { Memory: memoryBytes, MemorySwap: memoryBytes }
         : {}),
       // CPU cgroup: 0.5 core. Throttles — never kills — so an infinite loop
       // still needs the timeout to end it.
@@ -164,7 +197,7 @@ export async function runPython(
     await Promise.race([ended, sleep(500)]);
     const info = await container.inspect();
     const producedFiles = (await readdir(jobDir)).filter(
-      (n) => !inputNames.has(n),
+      (n) => !inputNames.has(n) && !COMPILER_ARTIFACTS.test(n),
     );
     return {
       jobId,
@@ -176,6 +209,8 @@ export async function runPython(
       oomKilled: info.State.OOMKilled,
       truncated: stdout.truncated || stderr.truncated,
       producedFiles,
+      language: rt.id,
+      compileFailed: StatusCode === COMPILE_FAILED,
     };
   } finally {
     if (timer) clearTimeout(timer);
@@ -208,5 +243,12 @@ function collector(cap: number) {
     },
   };
 }
+
+/**
+ * Files the toolchain leaves behind, which are not a result the user asked for.
+ * Without this, every C run would report a binary called "prog" as an output
+ * file, and every Java run a pile of .class files.
+ */
+const COMPILER_ARTIFACTS = /^(prog|a\.out)$|\.(class|o|obj)$/;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

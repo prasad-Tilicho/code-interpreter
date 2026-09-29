@@ -42,16 +42,28 @@ export interface Llm {
 
 /** The one tool the agent has. The description is what the model reads. */
 export const RUN_PYTHON: FunctionDeclaration = {
-  name: "run_python",
+  name: "run_code",
   description:
-    "Run a Python 3.12 script in an isolated sandbox and return its stdout, " +
-    "stderr and exit code. pandas and matplotlib are installed. Files the " +
-    "user uploaded are in /workspace (the working directory). Save any chart " +
-    "or output file into /workspace. No network. 10 second limit, 256 MB RAM.",
+    "Run a program in an isolated sandbox and return its stdout, stderr and " +
+    "exit code. Files the user uploaded are in /workspace, which is the " +
+    "working directory and the only writable place besides /tmp — save any " +
+    "chart or output file there. No network. 10 second limit (compiling " +
+    "counts towards it), 256 MB RAM.",
   parameters: {
     type: Type.OBJECT,
     properties: {
-      code: { type: Type.STRING, description: "The complete Python script." },
+      code: {
+        type: Type.STRING,
+        description: "The complete program, as a single file.",
+      },
+      language: {
+        type: Type.STRING,
+        description:
+          "python (default; pandas and matplotlib available) | javascript " +
+          "(node, standard library only) | c | cpp | java (the public class " +
+          "must be named Main) | bash. Prefer python for anything involving " +
+          "data or charts.",
+      },
     },
     required: ["code"],
   },
@@ -154,10 +166,15 @@ function classify(err: unknown): ErrorInfo {
   const m = (err as Error)?.message ?? "";
   const status = Number(m.match(/"code":\s*(\d{3})/)?.[1] ?? 0);
   const model = m.match(/"model":\s*"([^"]+)"/)?.[1];
-  if (status === 429 && /PerDay/.test(m)) return { kind: "daily-quota", status, model };
+  if (status === 429 && /PerDay/.test(m))
+    return { kind: "daily-quota", status, model };
   if (status === 429 || status === 503) {
     const secs = m.match(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/)?.[1];
-    return { kind: "transient", status, retryMs: secs ? Number(secs) * 1000 : undefined };
+    return {
+      kind: "transient",
+      status,
+      retryMs: secs ? Number(secs) * 1000 : undefined,
+    };
   }
   return { kind: "fatal", status };
 }
@@ -198,13 +215,17 @@ export function stubLlm(): Llm {
       if ("code" in next) {
         const call: ToolCall = {
           id: `stub-${step}`,
-          name: "run_python",
-          args: { code: next.code },
+          name: "run_code",
+          args: { code: next.code, language: "python" },
         };
         return {
           content: {
             role: "model",
-            parts: [{ functionCall: { id: call.id, name: call.name, args: call.args } }],
+            parts: [
+              {
+                functionCall: { id: call.id, name: call.name, args: call.args },
+              },
+            ],
           },
           toolCalls: [call],
           text: "",

@@ -9,11 +9,13 @@
  */
 import type { Content } from "@google/genai";
 import type { Llm, Usage } from "./llm.js";
-import { runPython, type InputFile, type RunResult } from "./sandbox.js";
+import { run, type InputFile, type RunResult } from "./sandbox.js";
 
 const MAX_STEPS = 8;
 
-export const SYSTEM_PROMPT = `You are a careful data analyst with one tool: run_python.
+export const SYSTEM_PROMPT = `You are a careful data analyst with one tool: run_code.
+It runs python by default; it can also run javascript, c, cpp, java and bash.
+Use python unless the user asks for a specific language.
 You cannot see the user's files directly — inspect them with code first
 (print columns, dtypes, a few rows) before computing anything.
 Every run_python call is a fresh process. Nothing persists between calls —
@@ -26,7 +28,7 @@ Never claim a result you did not print.`;
 
 export type AgentEvent =
   | { type: "model_call"; step: number }
-  | { type: "tool_call"; step: number; code: string }
+  | { type: "tool_call"; step: number; code: string; language: string }
   | { type: "tool_result"; step: number; result: RunResult }
   | { type: "answer"; text: string }
   | { type: "usage"; usage: Usage & { steps: number; modelCalls: number } }
@@ -80,8 +82,10 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     const responses: Content["parts"] = [];
     for (const call of turn.toolCalls) {
       const code = typeof call.args.code === "string" ? call.args.code : "";
-      emit({ type: "tool_call", step, code });
-      const result = await runPython(code, { files });
+      const language =
+        typeof call.args.language === "string" ? call.args.language : "python";
+      emit({ type: "tool_call", step, code, language });
+      const result = await run(code, { files, language });
       steps.push({ code, result });
       emit({ type: "tool_result", step, result });
       responses.push({
@@ -103,11 +107,13 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
 
 /** What the model gets to see about a run. Nothing else leaves the sandbox. */
 function toolOutput(r: RunResult): Record<string, unknown> {
-  const why = r.timedOut
-    ? "killed: exceeded the 10 s time limit"
-    : r.oomKilled
-      ? "killed: exceeded the 256 MB memory limit"
-      : undefined;
+  const why = r.compileFailed
+    ? "the code did not compile — see stderr"
+    : r.timedOut
+      ? "killed: exceeded the 10 s time limit"
+      : r.oomKilled
+        ? "killed: exceeded the memory limit"
+        : undefined;
   return {
     exit_code: r.exitCode,
     stdout: r.stdout,

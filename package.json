@@ -9,7 +9,7 @@
     "start": "tsx src/server.ts",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "sandbox:build": "docker build -t sandbox-python:3.12 sandbox-image",
+    "sandbox:build": "sh scripts/build-images.sh",
     "attacks": "tsx scripts/run-attacks.ts",
     "inspect": "sh scripts/inspect-box.sh",
     "ask": "tsx scripts/ask.ts"
